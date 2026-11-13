@@ -220,3 +220,138 @@ test('streamAnswer converts both vendor formats to OpenAI deltas (mocked, no net
     assert.deepEqual([bad.ok, errorFor(bad.status).error, errorFor(429).error], [false, 'config', 'quota']);
   } finally { globalThis.fetch = realFetch; }
 });
+
+// ---- regression tests for the security-audit fixes ----
+import { mock } from 'node:test';
+import { openDb as openDb2, admitEvents as admit2, recordEvents as rec2, stats as stats2 } from './db.mjs';
+import { saveSettings, loadSettings } from './settings.mjs';
+import { injectPreview, previewFor } from './og.mjs';
+import { gunzipSync } from 'node:zlib';
+import { writeFileSync as wf, mkdtempSync as mkd, mkdirSync as mkdir, rmSync as rm } from 'node:fs';
+import { tmpdir as td } from 'node:os';
+import { join as j } from 'node:path';
+
+test('og:url: $-patterns from the request URL are not expanded', () => {
+  const html = '<!doctype html><html lang="ar"><head><title>x</title></head><body></body></html>';
+  const out = injectPreview(html, { title: 't', description: 'd' }, 'http://x/?ref=en_kjv/jo/1/1&x=$`ZZZ$&');
+  assert.equal(out.split('<!doctype').length - 1, 1, 'head must not be duplicated');
+  assert.ok(out.includes('$`ZZZ$&amp;') || out.includes('$`ZZZ$&'), 'dollar sequences stay literal');
+  assert.equal(out.split('</head>').length - 1, 1);
+});
+
+test('previewFor: made-up ids never evict real cached versions and hits refresh', () => {
+  const d = mkd(j(td(), 'bible-og-'));
+  wf(j(d, 'en_kjv.json'), JSON.stringify([{ abbrev: 'jo', name: 'John', chapters: [['In the beginning']] }]));
+  assert.ok(previewFor(d, 'en_kjv/jo/1/1'));
+  rm(j(d, 'en_kjv.json'));
+  for (let i = 0; i < 20; i++) previewFor(d, `xx_fake${i}/jo/1/1`); // regex-valid but missing
+  assert.ok(previewFor(d, 'en_kjv/jo/1/1'), 'still served from cache after 20 made-up ids');
+  rm(d, { recursive: true, force: true });
+});
+
+test('API key is bound to its vendor: repointing vendor/base URL needs the key again', () => {
+  const dir3 = mkd(j(td(), 'bible-set-'));
+  const db3 = openDb2(j(dir3, 't.sqlite'));
+  const S = 'secret-secret-secret-1';
+  assert.ok(saveSettings(db3, { ai_enabled: true, ai_vendor: 'openai', ai_model: 'm', ai_api_key: 'DUMMYKEY12345678' }, S).ok);
+  const bad = saveSettings(db3, { ai_vendor: 'custom', ai_base_url: 'https://collector.example' }, S);
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors.ai_api_key, /re-enter/);
+  assert.equal(loadSettings(db3, S).ai_vendor, 'openai', 'nothing was written');
+  assert.ok(saveSettings(db3, { ai_vendor: 'custom', ai_base_url: 'https://api.example.com/v1', ai_api_key: 'NEWKEY123456789' }, S).ok, 'changing with a new key works');
+  assert.ok(saveSettings(db3, { ai_model: 'other' }, S).ok, 'unrelated changes keep the key');
+  assert.equal(loadSettings(db3, S).ai_api_key, 'NEWKEY123456789');
+  db3.close(); rm(dir3, { recursive: true, force: true });
+});
+
+test('safeBaseUrl: trailing-dot hostnames are treated like the dotless name', () => {
+  for (const bad of ['https://localhost./x', 'https://metadata.google.internal./x', 'https://box.local./x']) assert.equal(safeBaseUrl(bad), undefined, bad);
+});
+
+test('event storage is bounded per device and per day', () => {
+  const dir4 = mkd(j(td(), 'bible-ev-'));
+  const db4 = openDb2(j(dir4, 't.sqlite'));
+  const lim = { perDevice: 10, budget: 25 };
+  const evs = (n) => Array.from({ length: n }, () => ({ name: 'chapter_read', props: { book: 'gn' }, ts: Date.now() }));
+  const did = 'a'.repeat(20), did2 = 'b'.repeat(20), did3 = 'c'.repeat(20);
+  let room = admit2(db4, did, 50, lim); assert.equal(room, 10); rec2(db4, did, evs(room));
+  room = admit2(db4, did, 50, lim); assert.equal(room, 0, 'device is at its daily cap');
+  room = admit2(db4, did2, 50, lim); assert.equal(room, 10); rec2(db4, did2, evs(room));
+  room = admit2(db4, did3, 50, lim); assert.equal(room, 5, 'only the remaining app budget is left'); rec2(db4, did3, evs(room));
+  assert.equal(admit2(db4, 'd'.repeat(20), 5, lim), 0, 'app budget used up');
+  db4.close(); rm(dir4, { recursive: true, force: true });
+});
+
+test('stats aggregate inside SQLite and stay correct', () => {
+  const dir5 = mkd(j(td(), 'bible-st-'));
+  const db5 = openDb2(j(dir5, 't.sqlite'));
+  const mk = (book, n) => Array.from({ length: n }, () => ({ name: 'chapter_read', props: { book }, ts: Date.now() }));
+  rec2(db5, 'x'.repeat(20), [...mk('gn', 3), ...mk('jo', 5)]);
+  const s5 = stats2(db5);
+  assert.deepEqual(s5.topBooks.slice(0, 2), [{ k: 'jo', n: 5 }, { k: 'gn', n: 3 }]);
+  db5.close(); rm(dir5, { recursive: true, force: true });
+});
+
+test('serving: gzip works off-loop, plain streaming works, /texts is rate limited, bad did types are 400', async () => {
+  const d6 = mkd(j(td(), 'bible-sv-'));
+  mkdir(j(d6, 'dist/assets'), { recursive: true }); mkdir(j(d6, 'texts'), { recursive: true });
+  wf(j(d6, 'dist/index.html'), '<!doctype html><html><head></head><body></body></html>');
+  const big = JSON.stringify([{ abbrev: 'jo', name: 'John', chapters: [['x'.repeat(100000)]] }]);
+  wf(j(d6, 'texts/en_kjv.json'), big);
+  const a6 = createApp({ dist: j(d6, 'dist'), textsDir: j(d6, 'texts'), dbPath: j(d6, 't.sqlite'), env: { ADMIN_TOKEN: 'tok-123-long-enough-1' } });
+  await new Promise((r) => a6.server.listen(0, '127.0.0.1', r));
+  const b6 = `http://127.0.0.1:${a6.server.address().port}`;
+  const gz = await fetch(`${b6}/texts/en_kjv.json`, { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.equal(gz.status, 200);
+  assert.equal(gz.headers.get('content-encoding'), 'gzip');
+  const plain = await fetch(`${b6}/texts/en_kjv.json`, { headers: { 'Accept-Encoding': 'identity' } });
+  assert.equal(plain.status, 200);
+  assert.equal((await plain.text()).length, big.length);
+  const bad = await fetch(`${b6}/api/e`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ did: ['a'.repeat(20)], events: [] }) });
+  assert.equal(bad.status, 400, 'array did is rejected, not a 500');
+  let limited429 = false;
+  for (let i = 0; i < 320 && !limited429; i++) limited429 = (await fetch(`${b6}/texts/en_kjv.json`, { method: 'HEAD' })).status === 429;
+  assert.ok(limited429, '/texts has a rate limit');
+  await a6.close(); rm(d6, { recursive: true, force: true });
+});
+
+test('AI per-IP daily limit survives the hourly sweep (24h window is honoured)', async () => {
+  const d7 = mkd(j(td(), 'bible-ai-'));
+  mkdir(j(d7, 'dist'), { recursive: true }); wf(j(d7, 'dist/index.html'), '<!doctype html><html><head></head><body></body></html>');
+  mock.timers.enable({ apis: ['Date', 'setInterval'] });
+  const realFetch = globalThis.fetch;
+  let app7;
+  try {
+    app7 = createApp({ dist: j(d7, 'dist'), textsDir: j(d7, 'texts'), dbPath: j(d7, 't.sqlite'), env: { ADMIN_TOKEN: 'tok-123-long-enough-1' } });
+    await new Promise((r) => app7.server.listen(0, '127.0.0.1', r));
+    const b7 = `http://127.0.0.1:${app7.server.address().port}`;
+    const put = await realFetch(`${b7}/api/admin/settings`, { method: 'PUT', headers: { Authorization: 'Bearer tok-123-long-enough-1', 'Content-Type': 'application/json' }, body: JSON.stringify({ ai_enabled: true, ai_vendor: 'openai', ai_model: 'm', ai_api_key: 'DUMMYKEY12345678', ai_daily_per_ip: 2, ai_per_minute: 30 }) });
+    assert.equal(put.status, 200);
+    globalThis.fetch = (url, init) => (String(url).startsWith(b7) ? realFetch(url, init) : Promise.resolve(new Response('x', { status: 401 })));
+    const ask = () => realFetch(`${b7}/api/ai/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: 'hi' }) });
+    assert.notEqual((await ask()).status, 429);
+    assert.notEqual((await ask()).status, 429);
+    assert.equal((await ask()).status, 429, 'third question is over the daily limit');
+    mock.timers.tick(3_700_000); // the 10-minute sweep has now run several times
+    const after = await ask();
+    assert.equal(after.status, 429, 'still limited after the sweep');
+    assert.equal((await after.json()).error, 'daily_limit');
+  } finally {
+    globalThis.fetch = realFetch; mock.timers.reset();
+    if (app7) await app7.close();
+    rm(d7, { recursive: true, force: true });
+  }
+});
+
+test('admin page gets its own tight CSP; low-entropy admin tokens keep the dashboard disabled', async () => {
+  const r = await fetch(`${base}/admin`);
+  const csp = r.headers.get('content-security-policy');
+  assert.match(csp, /default-src 'none'/);
+  assert.doesNotMatch(csp, /facebook|googletagmanager|jsdelivr/);
+  const d8 = mkd(j(td(), 'bible-tk-'));
+  const weak = createApp({ dist: join(dir, 'dist'), dbPath: j(d8, 't.sqlite'), env: { ADMIN_TOKEN: 'aaaaaaaaaaaaaaaaaaaaaaaa' } });
+  await new Promise((r2) => weak.server.listen(0, '127.0.0.1', r2));
+  const w = await fetch(`http://127.0.0.1:${weak.server.address().port}/api/admin/stats`, { headers: { Authorization: 'Bearer aaaaaaaaaaaaaaaaaaaaaaaa' } });
+  assert.equal(w.status, 503);
+  await weak.close(); rm(d8, { recursive: true, force: true });
+});

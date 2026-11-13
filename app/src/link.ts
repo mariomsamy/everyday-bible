@@ -54,7 +54,7 @@ function parseVerses(s?: string): ReadLink['verses'] {
 /** Reads a reading URL. An unknown version or book invalidates the link. A chapter out of range becomes the nearest one. */
 export function parseReadPath(pathname: string): ReadLink | null {
   if (!pathname.startsWith(base)) return null;
-  const [v, b, c, vs] = pathname.slice(base.length).split('/').filter(Boolean).map((x) => decodeURIComponent(x).toLowerCase());
+  const [v, b, c, vs] = pathname.slice(base.length).split('/').filter(Boolean).map((x) => { try { return decodeURIComponent(x).toLowerCase(); } catch { return '\0'; } }); // a malformed %-escape just makes the link invalid
   const book = BOOKS.find((x) => x.id === b);
   if (!v || !book || !findVersion(v)) return null;
   const n = Math.trunc(Number(c));

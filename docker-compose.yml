@@ -21,6 +21,7 @@ services:
         required: false
     environment:
       FETCH_TEXTS: ${FETCH_TEXTS:-all}
+      TRUST_PROXY: ${TRUST_PROXY:-1}     # published only on 127.0.0.1, so the host proxy is exactly one hop
       CDN_FALLBACK: ${CDN_FALLBACK:-0}   # texts are self-hosted: no third-party CDN, no visitor IPs shared
     ports:
       - "127.0.0.1:${PORT:-8080}:8080"   # local only; the reverse proxy is the public entry

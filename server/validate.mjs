@@ -26,7 +26,7 @@ export function cleanProps(raw, allowed) {
 
 /** @returns {{did: string, events: {name: string, props: object, ts: number}[]} | null} */
 export function parseEvents(body, now = Date.now()) {
-  if (!body || typeof body !== 'object' || !DID_RE.test(String(body.did ?? '')) || !Array.isArray(body.events)) return null;
+  if (!body || typeof body !== 'object' || typeof body.did !== 'string' || !DID_RE.test(body.did) || !Array.isArray(body.events)) return null;
   const events = [];
   for (const e of body.events.slice(0, MAX_EVENTS)) {
     if (!e || typeof e.n !== 'string' || !Object.hasOwn(SCHEMA, e.n)) continue;

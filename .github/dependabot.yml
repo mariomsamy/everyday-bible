@@ -3,9 +3,11 @@ updates:
   - package-ecosystem: npm
     directory: /app
     schedule: { interval: weekly }
-  - package-ecosystem: github-actions
-    directory: /
-    schedule: { interval: weekly }
+  # CI runs on CircleCI, so GitHub Actions are no longer used and are not tracked.
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    # Stay on the current LTS line of Node: odd-numbered releases (25, 27, ...) are short-lived and never become LTS.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

@@ -108,7 +108,8 @@ export function track(name: string, params?: Params) {
     queue.push({ n: name, p: params, t: Date.now() });
     timer ??= setTimeout(flush, 5000);
   }
-  if (marketing === 'granted') pixelEvent(name, params);
+  // Ad pixels never receive reading data: only a fixed, parameter-free event (see PIXEL_EVENTS).
+  if (marketing === 'granted') pixelEvent(name);
 }
 
 export const trackFeature = (feature: Feature) => track('feature_use', { feature });
@@ -143,11 +144,25 @@ function script(src: string) {
   document.head.appendChild(s);
 }
 
+/** The reading position lives in the path (and ?ref= in the query). Third-party pixels read the page address, so it is cleared first. */
+function scrubAddress() {
+  try {
+    const root = new URL(import.meta.env.BASE_URL || '/', location.origin).pathname;
+    if (location.pathname !== root || location.search) history.replaceState(history.state, '', root + location.hash);
+  } catch {
+    /* no history access: nothing to scrub */
+  }
+}
+
+/** Events sent to ad pixels, with no parameters at all. Reading activity (chapters, versions, progress, plans) is never sent. */
+const PIXEL_EVENTS = new Set(['app_install']);
+
 async function loadPixels() {
   pixels ??= runtimeConfig().then((c) => c.pixels ?? {});
   const cfg = await pixels;
   if (pixelsLoaded || useAnalytics.getState().marketing !== 'granted') return;
   pixelsLoaded = cfg;
+  scrubAddress(); // before any pixel can record the page address
   const id = (s?: string) => (s && /^[\w-]{4,40}$/.test(s) ? s : null);
   if (id(cfg.meta)) {
     const fbq = function (...a: unknown[]) { (fbq as unknown as { queue: unknown[] }).queue.push(a); } as unknown as AnyFn & { queue: unknown[]; loaded: boolean };
@@ -155,6 +170,7 @@ async function loadPixels() {
     (fbq as unknown as Record<string, unknown>).push = fbq;
     (fbq as unknown as Record<string, unknown>).version = '2.0';
     w.fbq = fbq;
+    (fbq as unknown as Record<string, unknown>).disablePushState = true; // no automatic page views on history changes
     script('https://connect.facebook.net/en_US/fbevents.js');
     w.fbq('set', 'autoConfig', false, cfg.meta);
     w.fbq('init', cfg.meta);
@@ -195,17 +211,18 @@ async function loadPixels() {
   }
 }
 
-function pixelEvent(name: string, params?: Params) {
+function pixelEvent(name: string) {
+  if (!PIXEL_EVENTS.has(name)) return;
   if (!pixelsLoaded) {
-    void loadPixels().then(() => pixelsLoaded && useAnalytics.getState().marketing === 'granted' && pixelEvent(name, params));
+    void loadPixels().then(() => pixelsLoaded && useAnalytics.getState().marketing === 'granted' && pixelEvent(name));
     return;
   }
   const c = pixelsLoaded;
   const camel = name.replace(/(^|_)(\w)/g, (_, __, ch: string) => ch.toUpperCase());
-  if (c.meta && w.fbq) w.fbq('trackCustom', camel, params ?? {});
-  if (c.tiktok && w.ttq) (w.ttq as unknown as { track: AnyFn }).track(camel, params ?? {});
+  if (c.meta && w.fbq) w.fbq('trackCustom', camel, {});
+  if (c.tiktok && w.ttq) (w.ttq as unknown as { track: AnyFn }).track(camel, {});
   if (c.snap && w.snaptr) w.snaptr('track', 'CUSTOM_EVENT_1', { description: name });
-  if (c.ga4 && w.gtag) w.gtag('event', name, params ?? {});
+  if (c.ga4 && w.gtag) w.gtag('event', name, {});
 }
 
 /** Already-loaded third-party scripts cannot be unloaded: clear their cookies and reload so they are gone. */
