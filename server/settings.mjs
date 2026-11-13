@@ -15,7 +15,7 @@ export function safeBaseUrl(v) {
   if (typeof v !== 'string' || v.length > 200) return undefined;
   let u;
   try { u = new URL(v); } catch { return undefined; }
-  const h = u.hostname.toLowerCase();
+  const h = u.hostname.toLowerCase().replace(/\.+$/, ''); // 'localhost.' and 'x.internal.' are the same names
   if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return undefined;
   if (!h.includes('.') || /^[\d.]+$/.test(h) || h.includes(':') || /\.(local|internal|localhost|lan)$/.test(h) || h === 'localhost') return undefined;
   return u.origin + u.pathname.replace(/\/+$/, '');
@@ -35,6 +35,8 @@ export const FIELDS = {
   ai_model: { v: MODEL, def: '' },
   ai_base_url: { v: safeBaseUrl, def: '' },
   ai_api_key: { secret: true, v: (v) => (typeof v === 'string' && /^[\w.~+/=-]{8,400}$/.test(v) ? v : undefined), def: '' },
+  events_daily_budget: { v: INT(1000, 50_000_000), def: 500_000 },
+  events_per_device_day: { v: INT(10, 100_000), def: 1000 },
   ai_per_minute: { v: INT(1, 30), def: 6 },
   ai_daily_per_ip: { v: INT(1, 500), def: 30 },
   ai_daily_global: { v: INT(1, 1_000_000), def: 500 },
@@ -53,7 +55,7 @@ export function decrypt(blob, secret) {
   try {
     const [v, iv, tag, data] = String(blob).split(':');
     if (v !== 'v1') return '';
-    const d = createDecipheriv('aes-256-gcm', keyFor(secret), Buffer.from(iv, 'base64'));
+    const d = createDecipheriv('aes-256-gcm', keyFor(secret), Buffer.from(iv, 'base64'), { authTagLength: 16 });
     d.setAuthTag(Buffer.from(tag, 'base64'));
     return Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8');
   } catch { return ''; } // wrong token or corrupted: treat as not set
@@ -83,6 +85,17 @@ export function saveSettings(db, patch, secret, now = Date.now()) {
     const v = f.v(raw);
     if (v === undefined) { errors[k] = 'invalid value'; continue; }
     writes.push([k, f.secret ? encrypt(v, secret) : JSON.stringify(v)]);
+  }
+  // The saved API key is bound to the vendor it was entered for: changing the vendor or base URL needs the key again,
+  // otherwise a changed destination would receive the old key.
+  const cur = loadSettings(db, secret);
+  if (cur.ai_api_key && !Object.hasOwn(patch, 'ai_api_key')) {
+    for (const k of ['ai_vendor', 'ai_base_url']) {
+      if (!Object.hasOwn(patch, k)) continue;
+      const f = FIELDS[k];
+      const next = patch[k] === null || patch[k] === '' ? f.def : f.v(patch[k]);
+      if (next !== undefined && next !== cur[k]) errors.ai_api_key = 're-enter the API key when changing the vendor or base URL';
+    }
   }
   if (Object.keys(errors).length) return { ok: false, errors };
   db.exec('BEGIN');

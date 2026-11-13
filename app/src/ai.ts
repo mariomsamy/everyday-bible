@@ -69,6 +69,7 @@ export async function askAI({ question, passage, lang, history, signal, onText }
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > 65_536) throw new Error('line too long'); // a stream line without a newline must not grow without bound
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) {

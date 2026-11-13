@@ -20,7 +20,8 @@ COPY scripts ./scripts
 COPY deploy/entrypoint.sh ./deploy/entrypoint.sh
 COPY app/src/data/catalog.json ./app/src/data/catalog.json
 COPY --from=build /src/app/dist ./app/dist
-RUN mkdir -p /data/texts && chown -R node:node /data /srv && chmod +x deploy/entrypoint.sh
+# Code stays root-owned (the runtime user cannot rewrite it); only /data is writable.
+RUN mkdir -p /data/texts && chown -R node:node /data && chmod +x deploy/entrypoint.sh
 USER node
 VOLUME /data
 EXPOSE 8080

@@ -157,7 +157,7 @@ function aiTab(st) {
     check('ai_enabled', v.ai_enabled, 'Enable the AI assistant in the app'),
     field('Vendor', vendorSel), base,
     field('Model', modelIn, 'Use a model id from your vendor’s dashboard. A small, fast model keeps costs low.'),
-    field('API key', keyIn, 'Stored encrypted on the server, never sent to browsers, never shown again. Changing ADMIN_TOKEN requires entering it again.'), clearKey,
+    field('API key', keyIn, 'Stored encrypted on the server, never sent to browsers, never shown again. Changing ADMIN_TOKEN, the vendor or the base URL requires entering it again.'), clearKey,
     el('h3', {}, 'Cost and abuse limits'),
     el('div', { class: 'row2' },
       field('Questions per minute (per visitor IP)', num('ai_per_minute', v.ai_per_minute, 1, 30)),
@@ -181,6 +181,8 @@ function dataTab(st) {
   const out = el('div');
   const f = el('form', { class: 'form' },
     check('events_enabled', v.events_enabled, 'Collect anonymous usage statistics (only from visitors who opted in)'),
+    field('Max events stored per device per day', num('events_per_device_day', v.events_per_device_day, 10, 100000), 'Events above this are dropped, so one client cannot flood the database.'),
+    field('Max events stored per day (whole app)', num('events_daily_budget', v.events_daily_budget, 1000, 50000000), 'Hard daily cap on stored analytics rows.'),
     field('Keep statistics for (days, 30–400)', num('retention_days', v.retention_days, 30, 400), 'Older events are deleted automatically. Your privacy policy promises up to 400 days.'),
     el('button', { type: 'submit' }, 'Save'), out);
   f.addEventListener('submit', (e) => { e.preventDefault(); submit(f, v, out, (n2) => { settings = n2; show(); }); });

@@ -12,7 +12,7 @@ if [ ! -f .env ]; then
   token=$(node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))")
   cp .env.example .env
   sed -i.bak "s|^ADMIN_TOKEN=.*|ADMIN_TOKEN=$token|" .env && rm -f .env.bak
-  echo "Created .env with a random ADMIN_TOKEN (admin password): $token"
+  echo "Created .env with a random ADMIN_TOKEN (your admin password). Read it with: grep ADMIN_TOKEN .env"
   echo "Edit .env: PUBLIC_URL, TRUST_PROXY=1 behind a proxy, HOST=0.0.0.0 only if you expose it directly."
 fi
 

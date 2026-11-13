@@ -2,7 +2,7 @@
 // (no dependency on a third-party CDN, which some networks block).
 //   node scripts/fetch-texts.mjs            all versions in the catalog
 //   node scripts/fetch-texts.mjs ar_kehm en_web
-import { mkdir, writeFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile, stat, rename } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +23,9 @@ const one = async (id) => {
       if (!r.ok) continue;
       const text = (await r.text()).replace(/^﻿/, '');
       if (!Array.isArray(JSON.parse(text))) continue;
-      await writeFile(file, text);
+      const tmp = new URL(`${id}.json.part`, out);
+      await writeFile(tmp, text);
+      await rename(tmp, file); // never leave a half-written text that the size check would keep forever
       ok++;
       return;
     } catch { /* try next */ }

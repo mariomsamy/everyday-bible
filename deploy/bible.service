@@ -1,5 +1,5 @@
 # sudo cp deploy/bible.service /etc/systemd/system/ && sudo systemctl enable --now bible
-# Adjust User and the paths. Needs Node >= 22.5.
+# Adjust User and the paths. Needs Node >= 22.5. Only /var/lib/bible (database, texts) is writable; the code is not.
 [Unit]
 Description=Bible PWA
 After=network.target
@@ -14,7 +14,10 @@ Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/bible/server
+StateDirectory=bible
+ReadWritePaths=/var/lib/bible
+Environment=DB_PATH=/var/lib/bible/data.sqlite
+Environment=TEXTS_DIR=/var/lib/bible/texts
 PrivateTmp=true
 
 [Install]

@@ -7,10 +7,13 @@
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync, createReadStream } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { pipeline } from 'node:stream';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
-import { openDb, recordEvents, forget, purge, stats, bumpAiUsage, refuseAiUsage, aiUsage, purgeAll } from './db.mjs';
+import { gzip } from 'node:zlib';
+import { promisify } from 'node:util';
+import { openDb, recordEvents, admitEvents, forget, purge, stats, bumpAiUsage, refuseAiUsage, aiUsage, purgeAll } from './db.mjs';
 import { loadSettings, saveSettings, publicView, effectivePixelEnv } from './settings.mjs';
 import { aiReady, buildPrompt, streamAnswer, errorFor, VENDORS } from './ai.mjs';
 import { contentSecurityPolicy, DID_RE, parseEvents, pixelConfig } from './validate.mjs';
@@ -24,7 +27,8 @@ export function createApp(opts = {}) {
   const textsDir = opts.textsDir ?? env.TEXTS_DIR ?? join(ROOT, 'server/texts');
   const dbPath = opts.dbPath ?? env.DB_PATH ?? join(ROOT, 'server/data.sqlite');
   // A short token is brute-forceable: treat it as unset (dashboard disabled).
-  const adminToken = (env.ADMIN_TOKEN ?? '').length >= 16 ? env.ADMIN_TOKEN : '';
+  // 16+ characters and not trivially repetitive (a low-entropy token is brute-forceable): otherwise the dashboard stays disabled.
+  const adminToken = (env.ADMIN_TOKEN ?? '').length >= 16 && new Set(env.ADMIN_TOKEN).size >= 8 ? env.ADMIN_TOKEN : '';
   const trustProxy = env.TRUST_PROXY === '1'; // exactly one proxy hop; off by default
   const db = openDb(dbPath);
   // Settings edited in the admin page. Reloaded after every save; pixel ids there win over the environment.
@@ -57,11 +61,12 @@ export function createApp(opts = {}) {
     // Hard cap so spraying many addresses cannot grow memory without bound: drop the oldest entries.
     if (hits.size > 50_000) for (const key of hits.keys()) { hits.delete(key); if (hits.size <= 40_000) break; }
     const h = hits.get(k);
-    if (!h || now - h.start > windowMs) { hits.set(k, { start: now, n: 1 }); return false; }
+    if (!h || now - h.start > windowMs) { hits.set(k, { start: now, n: 1, w: windowMs }); return false; }
     h.n++;
     return h.n > max;
   };
-  const sweep = setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now - h.start > 3600_000) hits.delete(k); }, 600_000);
+  // Each entry expires after ITS OWN window (a 24 h AI counter must not be dropped after 1 h).
+  const sweep = setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now - h.start > h.w) hits.delete(k); }, 600_000);
   sweep.unref();
 
   const clientIp = (req) => {
@@ -120,7 +125,16 @@ export function createApp(opts = {}) {
     return !!m && timingSafeEqual(digest(m[1]), digest(adminToken));
   };
 
-  function serveFile(req, res, file, { immutable = false, noStore = false } = {}) {
+  // Compression runs off the event loop, at most GZ_MAX at a time. Over that, the file is simply sent uncompressed.
+  const gzipAsync = promisify(gzip);
+  const GZ_MAX = 2;
+  let gzActive = 0;
+  const gzInflight = new Map();
+
+  // The admin page needs nothing third-party: it gets its own, much tighter policy than the public app.
+  const ADMIN_CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+  async function serveFile(req, res, file, { immutable = false, noStore = false, csp: pageCsp } = {}) {
     const ext = extname(file);
     const st = statSync(file);
     const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
@@ -128,25 +142,42 @@ export function createApp(opts = {}) {
       'Content-Type': MIME[ext] ?? 'application/octet-stream',
       ETag: etag,
       'Cache-Control': noStore ? 'no-cache' : immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=3600',
+      ...(pageCsp && { 'Content-Security-Policy': pageCsp }),
     };
     if (req.headers['if-none-match'] === etag) return send(res, 304, '', headers);
     const wantsGzip = COMPRESSIBLE.has(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '') && st.size < 20 * 1024 * 1024;
     if (wantsGzip) {
       let gz = gzCache.get(file);
-      if (!gz || gz.etag !== etag) {
-        gz = { etag, buf: gzipSync(readFileSync(file)) };
-        gzCache.delete(file);
+      if (gz && gz.etag === etag) {
+        gzCache.delete(file); // LRU: a hit moves the entry to the newest position
         gzCache.set(file, gz);
-        // Bounded cache (about 48 MB): drop the oldest entries so 141 Bible texts can never exhaust memory.
-        let total = 0;
-        for (const v of gzCache.values()) total += v.buf.length;
-        for (const k of gzCache.keys()) { if (total <= 48 * 1024 * 1024 || gzCache.size <= 1) break; total -= gzCache.get(k).buf.length; gzCache.delete(k); }
+      } else {
+        const key = `${file}|${etag}`;
+        let job = gzInflight.get(key);
+        if (!job && gzActive < GZ_MAX) {
+          gzActive++;
+          job = readFile(file).then((b) => gzipAsync(b)).then((buf) => ({ etag, buf })).finally(() => { gzActive--; gzInflight.delete(key); });
+          gzInflight.set(key, job);
+        }
+        if (job) {
+          try { gz = await job; } catch { gz = null; }
+          if (gz) {
+            gzCache.delete(file);
+            gzCache.set(file, gz);
+            // Bounded cache (about 48 MB): drop the least recently used entries.
+            let total = 0;
+            for (const v of gzCache.values()) total += v.buf.length;
+            for (const k of gzCache.keys()) { if (total <= 48 * 1024 * 1024 || gzCache.size <= 1) break; total -= gzCache.get(k).buf.length; gzCache.delete(k); }
+          }
+        }
       }
-      return send(res, 200, gz.buf, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      if (gz) return send(res, 200, req.method === 'HEAD' ? '' : gz.buf, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+      // Busy (or failed): fall through and send the file uncompressed.
     }
     res.writeHead(200, baseHeaders({ ...headers, 'Content-Length': st.size }));
     if (req.method === 'HEAD') return res.end();
-    createReadStream(file).pipe(res);
+    // pipeline() closes the file when the client goes away and contains read errors (no unhandled 'error', no leaked descriptor).
+    pipeline(createReadStream(file), res, () => {});
   }
 
   const indexHtml = () => readFileSync(join(dist, 'index.html'), 'utf8');
@@ -168,7 +199,11 @@ export function createApp(opts = {}) {
       if (limited('e', ip, 120, 60_000)) return json(res, 429, { error: 'rate' });
       const parsed = parseEvents(await readBody(req));
       if (!parsed) return json(res, 400, { error: 'invalid' });
-      if (live.events_enabled && parsed.events.length) recordEvents(db, parsed.did, parsed.events);
+      if (live.events_enabled && parsed.events.length) {
+        // Storage is bounded: per device per day and for the whole app per day (anything above is dropped silently).
+        const room = admitEvents(db, parsed.did, parsed.events.length, { perDevice: live.events_per_device_day, budget: live.events_daily_budget });
+        if (room > 0) recordEvents(db, parsed.did, parsed.events.slice(0, room));
+      }
       res.writeHead(204, baseHeaders());
       return res.end();
     }
@@ -176,7 +211,7 @@ export function createApp(opts = {}) {
       if (!sameOrigin(req)) return json(res, 403, { error: 'origin' });
       if (limited('forget', ip, 20, 3600_000)) return json(res, 429, { error: 'rate' });
       const body = await readBody(req);
-      if (!body || !DID_RE.test(String(body.did ?? ''))) return json(res, 400, { error: 'invalid' });
+      if (!body || typeof body.did !== 'string' || !DID_RE.test(body.did)) return json(res, 400, { error: 'invalid' });
       forget(db, body.did);
       return json(res, 200, { ok: true });
     }
@@ -209,6 +244,7 @@ export function createApp(opts = {}) {
     }
     if (path === '/api/admin/ai/test' && req.method === 'POST') {
       if (!adminGate()) return;
+      if (!sameOrigin(req)) return json(res, 403, { error: 'origin' });
       if (!aiReady(live)) return json(res, 400, { ok: false, error: 'AI is not fully configured (enable it, pick a vendor, model and key).' });
       const t0 = Date.now();
       let sample = '';
@@ -259,15 +295,16 @@ export function createApp(opts = {}) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method Not Allowed', { Allow: 'GET, HEAD' });
 
     // ---------- Admin dashboard (static; data needs the token) ----------
-    if (path === '/admin' || path === '/admin/') return serveFile(req, res, join(ROOT, 'server/admin/index.html'), { noStore: true });
-    if (path === '/admin/admin.js') return serveFile(req, res, join(ROOT, 'server/admin/admin.js'), { noStore: true });
+    if (path === '/admin' || path === '/admin/') return serveFile(req, res, join(ROOT, 'server/admin/index.html'), { noStore: true, csp: ADMIN_CSP });
+    if (path === '/admin/admin.js') return serveFile(req, res, join(ROOT, 'server/admin/admin.js'), { noStore: true, csp: ADMIN_CSP });
 
     // ---------- Bible texts (self-hosted; fetched with scripts/fetch-texts.mjs) ----------
     const tm = /^\/texts\/([a-z]{2,3}_[a-z0-9-]+)\.json$/.exec(path);
     if (tm) {
+      if (limited('static', ip, 300, 60_000)) return json(res, 429, { error: 'rate' });
       const f = join(textsDir, `${tm[1]}.json`);
       if (!existsSync(f)) return send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' });
-      return serveFile(req, res, f, {});
+      return await serveFile(req, res, f, {});
     }
 
     // ---------- Static app ----------
@@ -278,9 +315,10 @@ export function createApp(opts = {}) {
     const file = normalize(join(dist, rel));
     if (file !== dist && !file.startsWith(dist + sep)) return send(res, 403, 'Forbidden');
     if (rel !== '/' && existsSync(file) && statSync(file).isFile()) {
+      if (limited('static', ip, 300, 60_000)) return json(res, 429, { error: 'rate' });
       const name = rel.slice(1);
       const noStore = ['sw.js', 'index.html', '404.html', 'version.json', 'early.js', 'manifest.webmanifest'].includes(name);
-      return serveFile(req, res, file, { immutable: name.startsWith('assets/'), noStore });
+      return await serveFile(req, res, file, { immutable: name.startsWith('assets/'), noStore });
     }
     if (/\.\w{1,6}$/.test(rel)) return send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' });
 
@@ -289,7 +327,8 @@ export function createApp(opts = {}) {
     let html = indexHtml();
     if (env.PUBLIC_URL) html = html.replaceAll('content="/og-thumb.png"', `content="${env.PUBLIC_URL.replace(/\/$/, '')}/og-thumb.png"`);
     const ref = url.searchParams.get('ref') ?? (rel === '/' ? null : rel);
-    const preview = ref ? previewFor(textsDir, ref) : null;
+    // Previews parse a whole Bible file, so they have a tighter limit than plain pages; over it the page is served without a preview.
+    const preview = ref && !limited('preview', ip, 30, 60_000) ? previewFor(textsDir, ref) : null;
     if (preview) html = injectPreview(html, preview, `${env.PUBLIC_URL ?? `http://${req.headers.host}`}${req.url}`);
     return send(res, 200, req.method === 'HEAD' ? '' : html, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' });
   }

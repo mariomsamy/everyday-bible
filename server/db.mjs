@@ -29,6 +29,7 @@ export function openDb(path) {
       pace TEXT NOT NULL DEFAULT 'none'
     );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS event_usage (day TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS ai_usage (day TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0, refused INTEGER NOT NULL DEFAULT 0);
   `);
   return db;
@@ -69,11 +70,25 @@ export function purge(db, now = Date.now(), days = RETENTION_DAYS) {
   const cut = now - Math.min(days, RETENTION_DAYS) * DAY;
   db.prepare('DELETE FROM events WHERE ts < ?').run(cut);
   db.prepare('DELETE FROM devices WHERE last_seen < ?').run(cut);
+  db.prepare('DELETE FROM event_usage WHERE day < ?').run(dayOf(now - 60 * DAY));
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
 }
 
+/**
+ * How many of `want` events may be stored now: bounded per device per day and for the whole app per day.
+ * Reserves the room atomically (this runs on the single event loop). Returns 0 when the budget is used up.
+ */
+export function admitEvents(db, did, want, { perDevice, budget }, now = Date.now()) {
+  const day = dayOf(now);
+  const used = db.prepare('SELECT n FROM event_usage WHERE day = ?').get(day)?.n ?? 0;
+  if (used >= budget) return 0;
+  const dev = db.prepare('SELECT COUNT(*) c FROM events WHERE did = ? AND day = ?').get(did, day).c;
+  const room = Math.max(0, Math.min(want, perDevice - dev, budget - used));
+  if (room > 0) db.prepare('INSERT INTO event_usage (day, n) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET n = n + excluded.n').run(day, room);
+  return room;
+}
+
 const rows = (db, sql, ...args) => db.prepare(sql).all(...args);
-const jget = (props, k) => { try { return JSON.parse(props)[k]; } catch { return undefined; } };
 
 const statsCache = new WeakMap();
 /** Cached for 60 s: the queries scan a month of events and run on the event loop. */
@@ -96,13 +111,11 @@ function computeStats(db, now) {
   const chaptersPerDay = rows(db, "SELECT day, COUNT(*) n FROM events WHERE name = 'chapter_read' AND day >= ? GROUP BY day ORDER BY day", d30);
   const byName = rows(db, 'SELECT name, COUNT(*) n, COUNT(DISTINCT did) users FROM events WHERE day >= ? GROUP BY name ORDER BY n DESC', d30);
 
+  // Aggregated inside SQLite (no rows are loaded into JS). `key` is always one of our own fixed property names.
   const countBy = (name, key) => {
-    const m = new Map();
-    for (const r of rows(db, 'SELECT props FROM events WHERE name = ? AND day >= ?', name, d30)) {
-      const v = jget(r.props, key);
-      if (v !== undefined) m.set(String(v), (m.get(String(v)) ?? 0) + 1);
-    }
-    return [...m].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n);
+    if (!/^\w+$/.test(key)) return [];
+    return rows(db, `SELECT CAST(json_extract(props, '$.${key}') AS TEXT) k, COUNT(*) n FROM events
+      WHERE name = ? AND day >= ? AND json_extract(props, '$.${key}') IS NOT NULL GROUP BY k ORDER BY n DESC LIMIT 50`, name, d30).map((r) => ({ k: r.k, n: r.n }));
   };
 
   const buckets = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
