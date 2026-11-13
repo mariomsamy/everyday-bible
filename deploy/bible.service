@@ -1,0 +1,21 @@
+# sudo cp deploy/bible.service /etc/systemd/system/ && sudo systemctl enable --now bible
+# Adjust User and the paths. Needs Node >= 22.5.
+[Unit]
+Description=Bible PWA
+After=network.target
+
+[Service]
+Type=simple
+User=bible
+WorkingDirectory=/opt/bible
+EnvironmentFile=/opt/bible/.env
+ExecStart=/usr/bin/node server/index.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/bible/server
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

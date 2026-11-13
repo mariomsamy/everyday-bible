@@ -1,0 +1,30 @@
+# docker compose up -d --build
+# Put a reverse proxy with HTTPS in front (see deploy/Caddyfile). Data (SQLite + Bible texts) lives in the "bible-data" volume.
+services:
+  bible:
+    build:
+      context: .
+      args:
+        VITE_CONTACT_EMAIL: ${VITE_CONTACT_EMAIL:-}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp"]
+    pids_limit: 200
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FETCH_TEXTS: ${FETCH_TEXTS:-all}
+      CDN_FALLBACK: ${CDN_FALLBACK:-0}   # texts are self-hosted: no third-party CDN, no visitor IPs shared
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"   # local only; the reverse proxy is the public entry
+    volumes:
+      - bible-data:/data
+volumes:
+  bible-data:

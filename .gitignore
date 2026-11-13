@@ -1,0 +1,5 @@
+node_modules
+source/cache
+server/*.sqlite*
+server/texts
+.env

@@ -1,0 +1,6 @@
+# Automatic HTTPS. Replace the domain, then: caddy run --config deploy/Caddyfile
+bible.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}
+# Set TRUST_PROXY=1 and PUBLIC_URL=https://bible.example.com in .env

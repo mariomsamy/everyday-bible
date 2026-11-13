@@ -1,0 +1,77 @@
+/* Color tokens. Three complete themes; "auto" resolves to light or dark before first paint. */
+:root {
+  --bg: #faf9f7;
+  --surface: #f1efeb;
+  --surface-2: #e9e6e0;
+  --fg: #1d2027;
+  --muted: #6a6f7c;
+  --line: #e4e1db;
+  --accent: #2c4a8f;
+  --accent-fg: #ffffff;
+  --danger: #b4443a;
+  --scrim: rgba(20, 22, 28, 0.38);
+  --bar-bg: rgba(250, 249, 247, 0.82);
+
+  --hl-yellow: #fff68b;
+  --hl-green: #cdfc93;
+  --hl-blue: #71d7ff;
+  --hl-pink: #ff7ecd;
+  --hl-orange: #ce81ff;
+
+  --font-ui: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', 'Noto Sans', sans-serif;
+  --font-serif: 'Literata Variable', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 30px rgba(20, 22, 28, 0.16);
+  /* Selection bar and toast: white in light, black in dark */
+  --float-bg: #ffffff;
+  --float-fg: var(--fg);
+  --float-line: var(--line);
+  color-scheme: light;
+}
+
+:root[data-theme='sepia'] {
+  --float-bg: #fbf6e9;
+  --float-fg: var(--fg);
+  --float-line: #dccfb4;
+  --bg: #f3ead8;
+  --surface: #eadfc8;
+  --surface-2: #e0d3b8;
+  --fg: #3a2f22;
+  --muted: #6c5d49;
+  --line: #dccfb4;
+  --accent: #8a4b1f;
+  --bar-bg: rgba(243, 234, 216, 0.84);
+  --hl-yellow: #f8ee79;
+  --hl-green: #c1f581;
+  --hl-blue: #60ccf7;
+  --hl-pink: #f76cc1;
+  --hl-orange: #c26ff7;
+}
+
+:root[data-theme='dark'] {
+  --bg: #14161b;
+  --surface: #1d2027;
+  --surface-2: #272b34;
+  --fg: #e4e6eb;
+  --muted: #9097a5;
+  --line: #2b2f39;
+  --accent: #8fb0ff;
+  --accent-fg: #101319;
+  --danger: #ff8a7d;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --bar-bg: rgba(20, 22, 27, 0.82);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --float-bg: #000000;
+  --float-fg: var(--fg);
+  --float-line: #2b2f39;
+  --hl-yellow: #6b6629;
+  --hl-green: #4d692a;
+  --hl-blue: #29586b;
+  --hl-pink: #6b2951;
+  --hl-orange: #51296b;
+  color-scheme: dark;
+}

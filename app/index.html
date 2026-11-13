@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf9f7" />
+    <meta name="description" content="اقرأ الكتاب المقدس بخطة تناسبك، وتابع تقدّمك، وشارك آياتك. مجاني، بدون حساب، ويعمل بلا إنترنت." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="الكتاب المقدس" />
+    <meta property="og:title" content="الكتاب المقدس" />
+    <meta property="og:description" content="اقرأ الكتاب المقدس بخطة تناسبك، وتابع تقدّمك، وشارك آياتك. مجاني، بدون حساب، ويعمل بلا إنترنت." />
+    <meta property="og:image" content="/og-thumb.png" />
+    <meta property="og:image:width" content="192" />
+    <meta property="og:image:height" content="192" />
+    <meta property="og:image:alt" content="كتاب مفتوح وعليه صليب" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="الكتاب المقدس" />
+    <meta name="twitter:description" content="اقرأ الكتاب المقدس بخطة تناسبك، وتابع تقدّمك، وشارك آياتك. مجاني، بدون حساب، ويعمل بلا إنترنت." />
+    <meta name="twitter:image" content="/og-thumb.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="الكتاب المقدس" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icons/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <title>الكتاب المقدس</title>
+    <script src="/early.js"></script>
+    <style>
+      /* Splash: lives in the HTML to show before the JavaScript loads. */
+      #splash { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; color: #1d2027; background: #faf9f7; transition: opacity 0.3s ease; }
+      :root[data-theme='sepia'] #splash { background: #f3ead8; color: #3a2f22; }
+      :root[data-theme='dark'] #splash { background: #14161b; color: #e4e6eb; }
+      #splash small { position: absolute; left: 0; right: 0; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); text-align: center; font: 500 13px/1 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif; opacity: 0.35; }
+      #splash span { font: 700 26px/1 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif; letter-spacing: -0.01em; }
+      .no-splash #splash { display: none; }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      #splash img { width: 96px; height: 96px; }
+      @media (prefers-reduced-motion: reduce) { #splash { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="splash" aria-hidden="true"><img src="/icons/icon-192.png" alt="" width="96" height="96" /><span>الكتاب المقدس</span></div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

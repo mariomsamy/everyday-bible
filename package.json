@@ -1,0 +1,14 @@
+{
+  "name": "everyday-bible",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "build": "npm --prefix app run build",
+    "start": "node server/index.mjs",
+    "texts": "node scripts/fetch-texts.mjs",
+    "setup": "bash deploy/install.sh",
+    "test": "node --test server/"
+  }
+}

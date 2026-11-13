@@ -1,0 +1,9 @@
+**/node_modules
+.git
+.env
+server/texts
+server/*.sqlite*
+app/dist
+app/tsconfig.tsbuildinfo
+.claude
+README.md
