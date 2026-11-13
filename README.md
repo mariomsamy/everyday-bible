@@ -27,7 +27,7 @@ Pick one. All need HTTPS in front for the PWA to install (see `deploy/Caddyfile`
 cp .env.example .env     # set ADMIN_TOKEN (16+ chars), PUBLIC_URL=https://your-domain, TRUST_PROXY=1
 docker compose up -d --build
 ```
-Data (SQLite, Bible texts, admin settings) persists in the `bible-data` volume. On first start it downloads the texts listed in `FETCH_TEXTS` in the background (default `ar_kehm,en_web,en_kjv`; use `all` for every version, about 670 MB). Optional build arg: `VITE_CONTACT_EMAIL` for the privacy policy. Health check: `/healthz`.
+Data (SQLite, Bible texts, admin settings) persists in the `bible-data` volume. On first start it downloads the texts listed in `FETCH_TEXTS` in the background (default `all`: every version, about 670 MB; use e.g. `ar_kehm,en_web,en_kjv` for a few). Optional build arg: `VITE_CONTACT_EMAIL` for the privacy policy. Health check: `/healthz`.
 
 **Without Docker (Node >= 22.5)**
 ```bash

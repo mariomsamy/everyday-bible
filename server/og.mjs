@@ -15,13 +15,16 @@ export function parseRef(ref) {
   return { version: m[1].toLowerCase(), book: safeDecode(m[2]).toLowerCase(), chapter: Number(m[3]), from, to };
 }
 
+// Small LRU of parsed versions. Missing files are never cached, so made-up ids cannot evict real entries.
 const cache = new Map();
 function loadVersion(dataDir, id) {
-  if (cache.has(id)) return cache.get(id);
+  const key = `${dataDir}|${id}`;
+  if (cache.has(key)) { const v = cache.get(key); cache.delete(key); cache.set(key, v); return v; }
   const file = join(dataDir, `${id}.json`);
-  const data = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
-  cache.set(id, data);
-  if (cache.size > 3) cache.delete(cache.keys().next().value);
+  if (!existsSync(file)) return null;
+  const data = JSON.parse(readFileSync(file, 'utf8'));
+  cache.set(key, data);
+  if (cache.size > 6) cache.delete(cache.keys().next().value);
   return data;
 }
 
@@ -50,5 +53,6 @@ export function injectPreview(html, p, url) {
     .replace(/(<meta property="og:description" content=")[^"]*"/, () => `$1${d}"`)
     .replace(/(<meta name="twitter:description" content=")[^"]*"/, () => `$1${d}"`)
     .replace(/(<meta name="description" content=")[^"]*"/, () => `$1${d}"`)
-    .replace('</head>', `    <meta property="og:url" content="${esc(url)}" />\n  </head>`);
+    // A function replacer: a string replacement would expand $& $` $' patterns taken from the request URL.
+    .replace('</head>', () => `    <meta property="og:url" content="${esc(url)}" />\n  </head>`);
 }

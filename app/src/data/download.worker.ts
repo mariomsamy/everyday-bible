@@ -9,6 +9,8 @@ export type WorkerOut =
 
 const post = (m: WorkerOut) => postMessage(m);
 
+const MAX_BYTES = 64 * 1024 * 1024;
+
 async function fetchText(url: string, expected: number): Promise<string> {
   const ctl = new AbortController();
   let stall = setTimeout(() => ctl.abort(), 30_000);
@@ -24,6 +26,7 @@ async function fetchText(url: string, expected: number): Promise<string> {
     stall = setTimeout(() => ctl.abort(), 30_000);
     chunks.push(value);
     got += value.length;
+    if (got > MAX_BYTES) throw new Error('too large'); // the biggest version is about 15 MB
     // The server may compress, so the real total is an estimate: cap at 90% until the download finishes.
     post({ type: 'progress', value: Math.min(0.9, got / expected) });
   }
