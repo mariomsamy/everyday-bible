@@ -16,7 +16,7 @@ ADMIN_TOKEN='<long random string>' PORT=8080 npm start     # http://127.0.0.1:80
 ```
 
 Tests: `npm test` (server) and
-`cd app && node --test src/progress/` (plan maths).
+`cd app && npm test` (plan maths).
 
 ## Deploy on any server
 
