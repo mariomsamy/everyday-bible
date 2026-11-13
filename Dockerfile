@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Bible PWA: builds the app, then runs the zero-dependency Node server that serves it. Works on any host with Docker.
 
-FROM node:24-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /src/app
 COPY app/package.json app/package-lock.json ./
 RUN npm ci
@@ -11,7 +11,7 @@ ARG VITE_CONTACT_EMAIL=
 ENV VITE_CONTACT_EMAIL=$VITE_CONTACT_EMAIL
 RUN npm run build
 
-FROM node:24-alpine
+FROM node:25-alpine
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 DB_PATH=/data/data.sqlite TEXTS_DIR=/data/texts
 WORKDIR /srv
 COPY package.json ./
