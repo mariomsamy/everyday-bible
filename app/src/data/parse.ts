@@ -15,7 +15,7 @@ export function parseVersion(raw: unknown): BookText[] {
   const out: BookText[] = [];
   for (const b of raw) {
     if (!b || typeof b.abbrev !== 'string' || !Array.isArray(b.chapters)) continue;
-    const id = known.has(b.abbrev) ? b.abbrev : ALIASES[b.abbrev];
+    const id = known.has(b.abbrev) ? b.abbrev : Object.hasOwn(ALIASES, b.abbrev) ? ALIASES[b.abbrev] : undefined;
     if (!id || out.some((x) => x.id === id)) continue;
     const chapters = b.chapters.map((c: unknown) =>
       Array.isArray(c) ? c.filter((v) => typeof v === 'string').map((v: string) => v.trim()) : [],

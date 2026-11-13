@@ -1,0 +1,67 @@
+# CircleCI pipeline: app typecheck + build + tests + dependency audit, server tests, and a Docker image build.
+# Node comes from the CircleCI convenience image (current LTS, which satisfies the server's Node >= 22.5).
+version: 2.1
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:lts
+    working_directory: ~/project
+
+jobs:
+  app:
+    executor: node
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - npm-v1-{{ checksum "app/package-lock.json" }}
+            - npm-v1-
+      - run:
+          name: Install dependencies (lockfile enforced)
+          working_directory: app
+          command: npm ci
+      - save_cache:
+          key: npm-v1-{{ checksum "app/package-lock.json" }}
+          paths:
+            - ~/.npm
+      - run:
+          name: Typecheck and build
+          working_directory: app
+          command: npm run build
+      - run:
+          name: App unit tests
+          working_directory: app
+          command: npm test
+      - run:
+          name: Audit production dependencies (fails on high/critical)
+          working_directory: app
+          command: npm audit --omit=dev --audit-level=high
+
+  server:
+    executor: node
+    steps:
+      - checkout
+      - run:
+          name: Check Node version (server needs >= 22.5 for node:sqlite)
+          command: node -e "const [a,b]=process.versions.node.split('.').map(Number); if (a<22||(a===22&&b<5)) { console.error('Node too old:', process.version); process.exit(1) }"
+      - run:
+          name: Server tests
+          command: npm test
+
+  docker:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build the production image
+          command: docker build -t everyday-bible-ci .
+
+workflows:
+  ci:
+    jobs:
+      - app
+      - server
+      - docker

@@ -9,6 +9,6 @@
     "start": "node server/index.mjs",
     "texts": "node scripts/fetch-texts.mjs",
     "setup": "bash deploy/install.sh",
-    "test": "node --test server/"
+    "test": "node --test \"server/*.test.mjs\""
   }
 }
